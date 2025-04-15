@@ -160,10 +160,7 @@ class TPSModel(BaseModel):
         kp_ref = self.netKP_Detector(self.ref, self.ref_seg)
 
         self.raw_key_points = kp_raw
-
-        # if not self.opt.isTrain:
         entropy_bottleneck = EntropyBottleneck(channels=1).to(self.device)
-
         kp_raw_hat, feature_likelihoods_kp_raw = entropy_bottleneck(kp_raw['fg_kp'])
         kp_ref_hat, feature_likelihoods_kp_ref = entropy_bottleneck(kp_ref['fg_kp'])
 
@@ -175,8 +172,6 @@ class TPSModel(BaseModel):
         self.feature_likelihoods = {}
         self.feature_likelihoods['kp'] = feature_likelihoods_kp_raw + feature_likelihoods_kp_ref
         self.feature_likelihoods['add_bg'] = feature_likelihoods_add_bg
-
-
         if epoch >= self.opt.dropout_epoch:
             dropout_flag = False
             dropout_p = 0
@@ -185,46 +180,24 @@ class TPSModel(BaseModel):
             dropout_flag = True
             dropout_p = min(epoch / self.opt.dropout_inc_epoch * self.opt.dropout_maxp
                             + self.opt.dropout_startp, self.opt.dropout_maxp)
-
         if not self.opt.isTrain and epoch == -1:  # test
             dropout_flag = False
             dropout_p = 0
-
         end_time = time.time()
-
         time_difference = end_time - start_time
         print(f"Encoder time: {time_difference} seconds")
-
-
         start_time = time.time()
-        dense_motion = self.netDenseMotionNet(source_image=self.ref, kp_driving=kp_raw,
-                                              kp_source=kp_ref, bg_param=self.bg_param,
+        dense_motion = self.netDenseMotionNet(source_image=self.ref, kp_driving=kp_raw_hat,
+                                              kp_source=kp_ref_hat, bg_param=self.bg_param,
                                               dropout_flag=dropout_flag, dropout_p=dropout_p)
-
-
         ##generate
         self.generated = self.netG(self.ref, dense_motion, self.lib_bg)
-
-
-        self.generated.update({'kp_source': kp_ref, 'kp_driving': kp_raw})
-
         self.real_A = self.generated['kp_driving']
-
         self.recon_image = self.fake_B = self.generated['prediction']  # G(A)
-
-
         self.flow_dense = dense_motion['deformation']
-
         self.wrap = self.netG.module.deform_input(self.ref, self.flow_dense)
-
-
-
-
         self.occlusion_map = dense_motion['occlusion_map']
-
-
         end_time = time.time()
-
         time_difference = end_time - start_time
         print(f"Decoder time: {time_difference} seconds")
 
@@ -256,14 +229,10 @@ class TPSModel(BaseModel):
             bits_feature_add_bg = torch.sum(torch.log(self.feature_likelihoods['add_bg'])) / (-np.log(2))
             self.bpp_add_bg = bits_feature_add_bg / (self.im_shape[0] * self.im_shape[2] * self.im_shape[3])
 
-
-
             self.bpp = {}
             self.bpp['total'] = self.total_bpp
             self.bpp['kp'] = self.bpp_kp
             self.bpp['add_bg'] = self.bpp_add_bg
-
-
             return self.fake_B, self.psnr, self.ms_ssim, self.value_lpips, self.value_dists, self.bpp
 
 
@@ -308,8 +277,6 @@ class TPSModel(BaseModel):
         ## L1 loss
         self.loss_G_L1 = self.criterionL1(self.fake_B, self.real_B) * self.opt.lambda_L1
         # print_info('model loss_G_L1:', self.loss_G_L1.cpu().data.numpy())
-
-
         # warp loss
         if self.opt.lambda_warp != 0:
             # deformed_source = self.generated['deformed']
@@ -323,8 +290,6 @@ class TPSModel(BaseModel):
                 value += torch.abs(encode_map[i] - decode_map[-i - 1]).mean()
 
             self.loss_wrap = (self.loss_wrap + value) * self.opt.lambda_warp
-
-
 
         ## Lp loss
         pyramide_real = self.pyramid(self.raw)
@@ -342,16 +307,11 @@ class TPSModel(BaseModel):
         else:
             self.loss_Lp = 0
 
-
         ## Lf loss
         if self.opt.lambda_Lf != 0:
             self.loss_Lf = self.criterionL2((self.fake_B-self.real_B)*self.raw_seg) * self.opt.lambda_Lf
         else:
             self.loss_Lf = 0
-
-
-
-
 
         # equivariance loss
         if self.opt.lambda_equivariance != 0:
@@ -371,7 +331,6 @@ class TPSModel(BaseModel):
 
         self.loss_G = self.loss_G_GAN + self.loss_G_L1 + self.loss_Lf + self.loss_Lf + self.loss_wrap \
                       + self.loss_equivariance
-
 
         self.loss_G.backward()
 
@@ -394,8 +353,6 @@ class TPSModel(BaseModel):
         self.optimizer_G.zero_grad()
         self.optimizer_KP_Detector.zero_grad()
         self.optimizer_DenseMotionNet.zero_grad()
-
-
         self.backward_others()
 
         self.optimizer_G.step()
